@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
+.venv/
+venv/
+ENV/
+
+# Temporary / Cloned experimental folders
+New folder/
+New folder*/
+
+# Local binary models (auto-downloaded by script)
+gesture_recognizer.task
+hand_landmarker.task
+
+# IDEs
+.vscode/
+.idea/
+
+# Local language references (GitHub repo keeps only English README)
+دليل_الحركات.md
+GESTURES_GUIDE.md
