@@ -17,31 +17,55 @@ SOUNDS_DIR = os.path.join(BASE_DIR, "sounds")
 # 1. إعدادات أجهزة الصوت (Audio Devices Configuration)
 # ====================================================================
 
-def find_device_id_by_keyword(keyword, is_output=True):
+def find_cable_output_id():
+    """البحث الذكي عن مخرج Virtual Cable (سواء سُمي CABLE Input أو VB-Audio Virtual Cable)"""
     try:
         devices = sd.query_devices()
+        candidates = []
         for i, dev in enumerate(devices):
+            if dev['max_output_channels'] > 0:
+                name = dev['name'].lower()
+                if 'cable input' in name or 'vb-audio virtual' in name or ('vb-audio' in name and 'cable' in name):
+                    candidates.append((i, dev))
+        if candidates:
+            # نفضل MME (hostapi == 0) لتفادي أي تعارض في الترددات بين التطبيقات
+            for idx, d in candidates:
+                if d['hostapi'] == 0:
+                    return idx
+            return candidates[0][0]
+    except Exception:
+        pass
+    return 6  # القيمة الافتراضية
+
+def find_monitor_output_id():
+    """البحث الذكي عن سماعاتك الشخصية لسماع الصوت في نفس الوقت"""
+    try:
+        devices = sd.query_devices()
+        def_out = sd.default.device[1]
+        if def_out is not None and def_out >= 0:
+            dev = devices[def_out]
             name = dev['name'].lower()
-            if keyword.lower() in name:
-                if is_output and dev['max_output_channels'] > 0:
-                    return i
-                elif not is_output and dev['max_input_channels'] > 0:
+            if 'vb-audio' not in name and 'cable' not in name:
+                return def_out
+        for i, dev in enumerate(devices):
+            if dev['max_output_channels'] > 0 and dev['hostapi'] == 0:
+                name = dev['name'].lower()
+                if ('realtek' in name or 'speaker' in name or 'headphone' in name) and 'vb-audio' not in name and 'cable' not in name:
                     return i
     except Exception:
         pass
-    return None
+    return 5
 
-# مخرج Virtual Cable (الذي يرسل الصوت لديسكورد)
-AUTO_CABLE_ID = find_device_id_by_keyword("cable input", is_output=True)
-CABLE_INPUT_ID = AUTO_CABLE_ID if AUTO_CABLE_ID is not None else 6
+# مخرج Virtual Cable (الذي يرسل الصوت لديسكورد والمايك)
+CABLE_INPUT_ID = find_cable_output_id()
 
 # سماع المؤثرات في سماعتك الشخصية أيضاً (Dual Audio Monitor)
 ENABLE_MONITOR = True
-MONITOR_OUTPUT_ID = None
+MONITOR_OUTPUT_ID = find_monitor_output_id()
 
 # مستويات الصوت (0.0 إلى 1.0)
 VOLUME_CABLE = 1.0
-VOLUME_MONITOR = 0.75
+VOLUME_MONITOR = 0.85
 
 # ====================================================================
 # 2. إعدادات الكاميرا واليد الواحدة (Camera & Single Hand Tracking)

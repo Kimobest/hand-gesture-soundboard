@@ -59,15 +59,15 @@ def list_audio_devices():
         tag = ""
         lower_name = name.lower()
 
-        # الكشف عن CABLE Input (مخرج الصوت الذي سيستمع له ديسكورد كإدخال)
-        if "cable input" in lower_name and max_out > 0:
-            tag = "  <-- * [CABLE Input - المخرج المستهدف للساوند بورد]"
+        # الكشف عن مخرج CABLE الافتراضي (الذي يبث له الساوند بورد)
+        if ("cable input" in lower_name or "vb-audio virtual" in lower_name or ("vb-audio" in lower_name and "cable" in lower_name)) and max_out > 0:
+            tag = "  <-- * [VB-Cable Playback - مخرج الساوند بورد]"
             if suggested_cable_in is None:
                 suggested_cable_in = (i, name, api_name)
 
-        # الكشف عن CABLE Output
+        # الكشف عن CABLE Output (مدخل المايك في ديسكورد)
         elif "cable output" in lower_name and max_in > 0:
-            tag = "  <-- [CABLE Output - مدخل ديسكورد]"
+            tag = "  <-- [CABLE Output - اختاره كمايك في ديسكورد]"
             if suggested_cable_out is None:
                 suggested_cable_out = (i, name, api_name)
 

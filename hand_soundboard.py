@@ -89,7 +89,7 @@ class SoundEngine:
         print("[✓] اكتمل بنك الأصوات بنجاح!\n")
 
     def play(self, gesture_name):
-        """تشغيل الصوت في مسار منفصل متعدد القنوات (CABLE + Monitor)"""
+        """تشغيل الصوت في مسارين متزامنين مستقلين (CABLE Virtual Mic + Monitor Headphones)"""
         if gesture_name not in self.sound_cache:
             return
 
@@ -97,18 +97,50 @@ class SoundEngine:
         self.last_played_name = f"{sound['emoji']} {sound['label']}"
         self.last_played_time = time.time()
 
-        def _play_worker():
+        def _stream_to_device(data, samplerate, dev_id, name="Device"):
+            stream = None
             try:
-                # 1. إرسال الصوت إلى مخرج الكابل الافتراضي (CABLE Input ليسمعه ديسكورد)
-                if self.cable_device_id is not None:
-                    sd.play(sound["cable_data"], sound["samplerate"], device=self.cable_device_id)
-
-                # 2. إرسال الصوت متزامناً إلى سماعتك الشخصية (إذا تم تفعيل خيار Monitor)
-                if self.enable_monitor:
-                    sd.play(sound["monitor_data"], sound["samplerate"], device=self.monitor_device_id)
-
+                channels = data.shape[1] if len(data.shape) > 1 else 1
+                duration = len(data) / float(samplerate)
+                stream = sd.OutputStream(device=dev_id, samplerate=samplerate, channels=channels, dtype='float32')
+                stream.start()
+                stream.write(data)
+                # الانتظار حتى اكتمال خروج الصوت من كرت الصوت قبل إغلاق القناة
+                time.sleep(duration + 0.05)
+                stream.stop()
             except Exception as e:
-                print(f"[!] خطأ أثناء تشغيل الصوت: {e}")
+                print(f"[!] خطأ أثناء بث الصوت إلى {name} (ID #{dev_id}): {e}")
+            finally:
+                if stream:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+
+        def _play_worker():
+            threads = []
+            # 1. إرسال الصوت إلى مخرج الكابل الافتراضي (CABLE Input ليسمعه ديسكورد والمايك)
+            if self.cable_device_id is not None:
+                t_cable = threading.Thread(
+                    target=_stream_to_device,
+                    args=(sound["cable_data"], sound["samplerate"], self.cable_device_id, "Virtual Cable"),
+                    daemon=True
+                )
+                threads.append(t_cable)
+                t_cable.start()
+
+            # 2. إرسال الصوت متزامناً إلى سماعتك الشخصية (إذا تم تفعيل خيار Monitor)
+            if self.enable_monitor and self.monitor_device_id is not None:
+                t_mon = threading.Thread(
+                    target=_stream_to_device,
+                    args=(sound["monitor_data"], sound["samplerate"], self.monitor_device_id, "Monitor Speakers"),
+                    daemon=True
+                )
+                threads.append(t_mon)
+                t_mon.start()
+
+            for t in threads:
+                t.join()
 
         threading.Thread(target=_play_worker, daemon=True).start()
 
