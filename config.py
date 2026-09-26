@@ -56,12 +56,39 @@ def find_monitor_output_id():
         pass
     return 5
 
+def find_real_mic_id():
+    """البحث الذكي عن الميكروفون الحقيقي الخاص بك (Realtek Microphone)"""
+    try:
+        devices = sd.query_devices()
+        # 1. تفضيل مايك Realtek الأصلي للجهاز
+        for i, dev in enumerate(devices):
+            if dev['max_input_channels'] > 0 and dev['hostapi'] == 0:
+                name = dev['name'].lower()
+                if 'realtek' in name and 'mic' in name:
+                    return i
+        # 2. أي مايك حقيقي لا يحتوي على كلمات برامج البث الافتراضية
+        for i, dev in enumerate(devices):
+            if dev['max_input_channels'] > 0 and dev['hostapi'] == 0:
+                name = dev['name'].lower()
+                if 'mic' in name and not any(k in name for k in ['steam', 'cable', 'mapper', 'virtual']):
+                    return i
+    except Exception:
+        pass
+    return 3
+
 # مخرج Virtual Cable (الذي يرسل الصوت لديسكورد والمايك)
 CABLE_INPUT_ID = find_cable_output_id()
 
 # سماع المؤثرات في سماعتك الشخصية أيضاً (Dual Audio Monitor)
 ENABLE_MONITOR = True
 MONITOR_OUTPUT_ID = find_monitor_output_id()
+
+# الميكروفون الحقيقي الخاص بك (لتمرير صوتك مع الساوند بورد مباشرة)
+REAL_MIC_ID = find_real_mic_id()
+
+# دمج وتمرير صوتك الحقيقي مع مؤثرات الساوند بورد تلقائياً بدون أي برامج خارجية
+ENABLE_MIC_PASSTHROUGH = True
+MIC_VOLUME = 1.0
 
 # مستويات الصوت (0.0 إلى 1.0)
 VOLUME_CABLE = 1.0

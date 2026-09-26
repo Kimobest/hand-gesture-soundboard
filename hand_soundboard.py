@@ -52,11 +52,63 @@ class SoundEngine:
         self.sound_cache = {}
         self.cable_device_id = config.CABLE_INPUT_ID
         self.monitor_device_id = config.MONITOR_OUTPUT_ID
+        self.real_mic_id = getattr(config, "REAL_MIC_ID", 3)
         self.enable_monitor = config.ENABLE_MONITOR
+        self.enable_mic_passthrough = getattr(config, "ENABLE_MIC_PASSTHROUGH", True)
+        self.mic_volume = getattr(config, "MIC_VOLUME", 1.0)
         self.last_played_name = "None"
         self.last_played_time = 0.0
 
+        self.active_cable_sounds = []
+        self.lock = threading.Lock()
+        self.cable_stream = None
+
         self.preload_sounds()
+        self.start_cable_mixer()
+
+    def start_cable_mixer(self):
+        """بدء الميكسر الحي المباشر لدمج صوت المايك الحقيقي ومؤثرات الساوند بورد إلى CABLE Input"""
+        if self.cable_device_id is None:
+            return
+
+        def _mixer_callback(indata, outdata, frames, time_info, status):
+            # 1. تمرير صوت المايك الحقيقي المباشر
+            if self.enable_mic_passthrough and indata is not None:
+                if indata.shape[1] == 1 and outdata.shape[1] == 2:
+                    mixed = np.column_stack((indata[:, 0], indata[:, 0])) * float(self.mic_volume)
+                else:
+                    mixed = indata * float(self.mic_volume)
+            else:
+                mixed = np.zeros((frames, 2), dtype=np.float32)
+
+            # 2. خلط المؤثرات الصوتية النشطة فوق صوت المايك
+            with self.lock:
+                for i in range(len(self.active_cable_sounds) - 1, -1, -1):
+                    snd = self.active_cable_sounds[i]
+                    n = min(frames, len(snd))
+                    mixed[:n] += snd[:n]
+                    if n < len(snd):
+                        self.active_cable_sounds[i] = snd[n:]
+                    else:
+                        self.active_cable_sounds.pop(i)
+
+            outdata[:] = np.clip(mixed, -1.0, 1.0)
+
+        try:
+            device_pair = (self.real_mic_id, self.cable_device_id) if (self.enable_mic_passthrough and self.real_mic_id is not None) else self.cable_device_id
+            self.cable_stream = sd.Stream(
+                device=device_pair,
+                samplerate=44100,
+                blocksize=512,
+                channels=2,
+                dtype='float32',
+                callback=_mixer_callback
+            )
+            self.cable_stream.start()
+            print(f"[✓] تم تفعيل دمج المايك الحقيقي (ID #{self.real_mic_id}) ومؤثرات الساوند بورد إلى CABLE (ID #{self.cable_device_id}) بنجاح!")
+        except Exception as e:
+            print(f"[!] تحذير: تعذر تشغيل ميكسر المايك المباشر ({e}). سيتم استخدام نمط البث عند الطلب.")
+            self.cable_stream = None
 
     def preload_sounds(self):
         """تحميل جميع ملفات الصوت مسبقاً في الذاكرة RAM لتفادي أي بطء في القراءة من القرص"""
@@ -89,7 +141,7 @@ class SoundEngine:
         print("[✓] اكتمل بنك الأصوات بنجاح!\n")
 
     def play(self, gesture_name):
-        """تشغيل الصوت في مسارين متزامنين مستقلين (CABLE Virtual Mic + Monitor Headphones)"""
+        """تشغيل المؤثر الصوتي وإرساله للكيبل وسماعتك الشخصية بالتوازي"""
         if gesture_name not in self.sound_cache:
             return
 
@@ -97,52 +149,62 @@ class SoundEngine:
         self.last_played_name = f"{sound['emoji']} {sound['label']}"
         self.last_played_time = time.time()
 
-        def _stream_to_device(data, samplerate, dev_id, name="Device"):
-            stream = None
+        # 1. إرسال الصوت للكيبل الافتراضي (ديسكورد والمايك)
+        if self.cable_stream is not None and self.cable_stream.active:
+            with self.lock:
+                self.active_cable_sounds.append(sound["cable_data"].copy())
+        elif self.cable_device_id is not None:
+            def _play_cable_fallback():
+                stream = None
+                try:
+                    channels = sound["cable_data"].shape[1] if len(sound["cable_data"].shape) > 1 else 1
+                    dur = len(sound["cable_data"]) / float(sound["samplerate"])
+                    stream = sd.OutputStream(device=self.cable_device_id, samplerate=sound["samplerate"], channels=channels, dtype='float32')
+                    stream.start()
+                    stream.write(sound["cable_data"])
+                    time.sleep(dur + 0.05)
+                    stream.stop()
+                except Exception as e:
+                    print(f"[!] خطأ في بث الكيبل: {e}")
+                finally:
+                    if stream:
+                        try:
+                            stream.close()
+                        except Exception:
+                            pass
+            threading.Thread(target=_play_cable_fallback, daemon=True).start()
+
+        # 2. إرسال الصوت متزامناً إلى سماعتك الشخصية (Monitor)
+        if self.enable_monitor and self.monitor_device_id is not None:
+            def _play_monitor():
+                stream = None
+                try:
+                    channels = sound["monitor_data"].shape[1] if len(sound["monitor_data"].shape) > 1 else 1
+                    dur = len(sound["monitor_data"]) / float(sound["samplerate"])
+                    stream = sd.OutputStream(device=self.monitor_device_id, samplerate=sound["samplerate"], channels=channels, dtype='float32')
+                    stream.start()
+                    stream.write(sound["monitor_data"])
+                    time.sleep(dur + 0.05)
+                    stream.stop()
+                except Exception as e:
+                    print(f"[!] خطأ في بث سماعات المراقبة: {e}")
+                finally:
+                    if stream:
+                        try:
+                            stream.close()
+                        except Exception:
+                            pass
+            threading.Thread(target=_play_monitor, daemon=True).start()
+
+    def stop(self):
+        """إيقاف ميكسر الصوت بأمان تام"""
+        if self.cable_stream is not None:
             try:
-                channels = data.shape[1] if len(data.shape) > 1 else 1
-                duration = len(data) / float(samplerate)
-                stream = sd.OutputStream(device=dev_id, samplerate=samplerate, channels=channels, dtype='float32')
-                stream.start()
-                stream.write(data)
-                # الانتظار حتى اكتمال خروج الصوت من كرت الصوت قبل إغلاق القناة
-                time.sleep(duration + 0.05)
-                stream.stop()
-            except Exception as e:
-                print(f"[!] خطأ أثناء بث الصوت إلى {name} (ID #{dev_id}): {e}")
-            finally:
-                if stream:
-                    try:
-                        stream.close()
-                    except Exception:
-                        pass
-
-        def _play_worker():
-            threads = []
-            # 1. إرسال الصوت إلى مخرج الكابل الافتراضي (CABLE Input ليسمعه ديسكورد والمايك)
-            if self.cable_device_id is not None:
-                t_cable = threading.Thread(
-                    target=_stream_to_device,
-                    args=(sound["cable_data"], sound["samplerate"], self.cable_device_id, "Virtual Cable"),
-                    daemon=True
-                )
-                threads.append(t_cable)
-                t_cable.start()
-
-            # 2. إرسال الصوت متزامناً إلى سماعتك الشخصية (إذا تم تفعيل خيار Monitor)
-            if self.enable_monitor and self.monitor_device_id is not None:
-                t_mon = threading.Thread(
-                    target=_stream_to_device,
-                    args=(sound["monitor_data"], sound["samplerate"], self.monitor_device_id, "Monitor Speakers"),
-                    daemon=True
-                )
-                threads.append(t_mon)
-                t_mon.start()
-
-            for t in threads:
-                t.join()
-
-        threading.Thread(target=_play_worker, daemon=True).start()
+                self.cable_stream.stop()
+                self.cable_stream.close()
+            except Exception:
+                pass
+            self.cable_stream = None
 
 
 class GestureCooldownManager:
@@ -300,10 +362,16 @@ class HandSoundboardApp:
             cv2.putText(frame, "READY | Show Hand to Play", (20, 42),
                         cv2.FONT_HERSHEY_DUPLEX, 0.65, (150, 150, 160), 2, cv2.LINE_AA)
 
-        # معدل الإطارات (FPS) ومخرج الصوت
+        # معدل الإطارات (FPS) وحالة المايك والكيبل
         cv2.putText(frame, f"FPS: {int(self.fps)}", (w - 110, 30),
                     cv2.FONT_HERSHEY_DUPLEX, 0.65, (0, 255, 255), 1, cv2.LINE_AA)
-        cv2.putText(frame, f"CABLE: #{self.sound_engine.cable_device_id}", (w - 160, 58),
+
+        mic_active = self.sound_engine.cable_stream is not None and self.sound_engine.cable_stream.active
+        mic_text = "MIC: LIVE" if mic_active else "MIC: MUTE"
+        mic_color = (0, 255, 128) if mic_active else (140, 140, 150)
+        cv2.putText(frame, mic_text, (w - 230, 58),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, mic_color, 1, cv2.LINE_AA)
+        cv2.putText(frame, f"CABLE: #{self.sound_engine.cable_device_id}", (w - 120, 58),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1, cv2.LINE_AA)
 
         # الشريط السفلي
@@ -392,6 +460,7 @@ class HandSoundboardApp:
 
         cap.release()
         cv2.destroyAllWindows()
+        self.sound_engine.stop()
         sd.stop()
         print("[✓] تم إنهاء جميع العمليات وإغلاق الكاميرا والصوت بأمان.")
 

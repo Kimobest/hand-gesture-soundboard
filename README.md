@@ -95,16 +95,10 @@ To let friends in **Discord** hear your real voice **and** your soundboard effec
 ### Step 1: Install Virtual Cable
 Download and install [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) (Free).
 
-### Step 2: Combine Real Mic with Soundboard (Windows Native Zero-Lag Trick)
-1. Press `Win + R`, type `mmsys.cpl`, and hit `Enter` to open the Windows Sound Control Panel.
-2. Go to the **Recording** tab.
-3. Right-click your **Real Microphone** -> **Properties**.
-4. Go to the **Listen** tab:
-   * Check **"Listen to this device"**.
-   * Under **"Playback through this device"**, select **`CABLE Input (VB-Audio Virtual Cable)`**.
-5. Click **Apply** -> **OK**.
+### Step 2: Automatic Mic Mixing (Zero-Setup Built-In!)
+The soundboard automatically detects your real microphone and mixes your voice directly with soundboard effects into **VB-Audio Cable** with ultra-low latency (~11ms). You don't need any complex Windows routing or extra mixing software!
 
-> **Result:** Your voice and the Python soundboard both feed directly into `CABLE Input` without using any third-party mixing software or CPU resources!
+*(Optional Manual Fallback)*: If you prefer Windows native routing instead, open Windows Sound Settings (`mmsys.cpl`), go to Recording -> Properties of your Real Mic -> Listen tab -> check "Listen to this device" -> select `Speakers (VB-Audio Virtual Cable)`.
 
 ### Step 3: Discord Voice Settings
 In Discord, go to **User Settings ⚙️ -> Voice & Video**:
