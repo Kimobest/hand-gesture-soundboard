@@ -98,7 +98,28 @@ VOLUME_MONITOR = 0.85
 # 2. إعدادات الكاميرا واليد الواحدة (Camera & Single Hand Tracking)
 # ====================================================================
 
+def detect_available_cameras(max_check=4):
+    """فحص واكتشاف أرقام الكاميرات المتاحة في النظام"""
+    available = []
+    try:
+        import cv2
+        for i in range(max_check):
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                ret, _ = cap.read()
+                if ret:
+                    available.append(i)
+                cap.release()
+    except Exception:
+        pass
+    return available if available else [0]
+
+# رقم الكاميرا الافتراضية (0 أو 1 أو 2...)
 CAMERA_INDEX = 0
+
+# إظهار قائمة اختيار الكاميرا عند بدء التشغيل إذا وُجدت أكثر من كاميرا
+PROMPT_CAMERA_ON_START = True
+
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 FLIP_HORIZONTAL = True

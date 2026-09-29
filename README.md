@@ -43,6 +43,7 @@ hand-gesture-soundboard/
 ├── hand_soundboard.py     # Main application (Webcam loop, MediaPipe, Audio routing, HUD)
 ├── config.py              # Configuration file (Device IDs, cooldown timers, mappings)
 ├── list_devices.py        # Audio device inspection utility
+├── list_cameras.py        # Camera discovery, preview, and selection utility
 ├── generate_samples.py    # Algorithmic DSP generator for 7 clean WAV sound effects
 ├── requirements.txt       # Python dependencies
 ├── run_soundboard.bat     # One-click launcher for Windows
@@ -68,12 +69,13 @@ cd hand-gesture-soundboard
 pip install -r requirements.txt
 ```
 
-### 2. Verify Audio Devices
+### 2. Verify Devices (Audio & Camera)
 
-Run the audio device explorer to check your sound cards and Virtual Cable:
+Check your sound devices and preview connected webcams:
 
 ```bash
-python list_devices.py
+python list_devices.py   # Audio Explorer (VB-Cable, Mic, Speakers)
+python list_cameras.py   # Camera Explorer (Preview and pick webcam)
 ```
 
 ### 3. Launch the Soundboard
@@ -84,6 +86,7 @@ Run via command line or double-click `run_soundboard.bat`:
 python hand_soundboard.py
 ```
 
+* Press **`C`** to instantly switch between cameras in real-time.
 * Press **`Q`** or **`ESC`** at any time to exit cleanly.
 
 ---

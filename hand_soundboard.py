@@ -261,12 +261,26 @@ class GestureCooldownManager:
 
 
 class HandSoundboardApp:
-    """التطبيق الرئيسي للـ Soundboard التفاعلي باليد الواحدة"""
+    """التطبيق الرئيسي للـ Soundboard التفاعلي باليد الواحدة مع دعم اختيار وتبديل الكاميرات"""
 
     def __init__(self):
         self.ensure_model_exists()
         self.sound_engine = SoundEngine()
         self.cooldown_mgr = GestureCooldownManager()
+
+        # الكشف عن الكاميرات المتاحة في النظام
+        self.available_cameras = config.detect_available_cameras()
+        self.camera_index = config.CAMERA_INDEX
+        if self.camera_index not in self.available_cameras and self.available_cameras:
+            self.camera_index = self.available_cameras[0]
+
+        self.cap = None
+        self.camera_toast_text = ""
+        self.camera_toast_time = 0.0
+
+        # خيار تفاعلي لاختيار الكاميرا عند بدء التشغيل إذا وُجد أكثر من كاميرا
+        if getattr(config, "PROMPT_CAMERA_ON_START", True) and len(self.available_cameras) > 1:
+            self.select_camera_interactive()
 
         # تهيئة نموذج MediaPipe Gesture Recognizer ليد واحدة
         base_options = mp_python.BaseOptions(model_asset_path=config.MODEL_PATH)
@@ -285,6 +299,51 @@ class HandSoundboardApp:
         self.fps = 0.0
         self.fps_filter = 0.9
         self.prev_time = time.time()
+
+    def select_camera_interactive(self):
+        """عرض قائمة اختيار الكاميرا عند توفر أكثر من كاميرا متصلة مع مؤقت ذكي"""
+        print("\n" + "=" * 65)
+        print("  📷 تم اكتشاف أكثر من كاميرا متصلة بالنظام:")
+        print("=" * 65)
+        for idx in self.available_cameras:
+            marker = " (الكاميرا الحالية)" if idx == self.camera_index else ""
+            print(f"   [{idx}] Camera #{idx}{marker}")
+        print("-----------------------------------------------------------------")
+        print(f" اضغط رقم الكاميرا لاختيارها فوراً، أو اضغط Enter لمتابعة #{self.camera_index}")
+        print(" (يمكنك أيضاً الضغط على حرف [C] في أي وقت أثناء عمل الكاميرا للتبديل)")
+        print("-----------------------------------------------------------------")
+
+        try:
+            import msvcrt
+            print(f"[*] المتابعة تلقائياً خلال 3 ثوانٍ: ", end="", flush=True)
+            start_t = time.time()
+            timeout = 3.0
+            chosen = None
+            last_sec = -1
+
+            while time.time() - start_t < timeout:
+                remaining = int(timeout - (time.time() - start_t) + 0.9)
+                if remaining != last_sec:
+                    print(f"{remaining}.. ", end="", flush=True)
+                    last_sec = remaining
+
+                if msvcrt.kbhit():
+                    ch = msvcrt.getch().decode("utf-8", errors="ignore").strip()
+                    if ch in [str(c) for c in self.available_cameras]:
+                        chosen = int(ch)
+                        break
+                    elif ch in ["\r", "\n", " "]:
+                        chosen = self.camera_index
+                        break
+                time.sleep(0.05)
+
+            if chosen is not None:
+                self.camera_index = chosen
+                print(f"\n[✓] تم اختيار الكاميرا #{self.camera_index}!\n")
+            else:
+                print(f"\n[✓] تم المتابعة بالكاميرا الافتراضية #{self.camera_index}.\n")
+        except Exception:
+            pass
 
     def ensure_model_exists(self):
         """التأكد من وجود ملف نموذج MediaPipe وتنزيله تلقائياً إذا كان مفقوداً"""
@@ -362,16 +421,21 @@ class HandSoundboardApp:
             cv2.putText(frame, "READY | Show Hand to Play", (20, 42),
                         cv2.FONT_HERSHEY_DUPLEX, 0.65, (150, 150, 160), 2, cv2.LINE_AA)
 
-        # معدل الإطارات (FPS) وحالة المايك والكيبل
+        # معدل الإطارات (FPS) وحالة المايك والكيبل والكاميرا
         cv2.putText(frame, f"FPS: {int(self.fps)}", (w - 110, 30),
                     cv2.FONT_HERSHEY_DUPLEX, 0.65, (0, 255, 255), 1, cv2.LINE_AA)
 
         mic_active = self.sound_engine.cable_stream is not None and self.sound_engine.cable_stream.active
         mic_text = "MIC: LIVE" if mic_active else "MIC: MUTE"
         mic_color = (0, 255, 128) if mic_active else (140, 140, 150)
-        cv2.putText(frame, mic_text, (w - 230, 58),
+        cv2.putText(frame, mic_text, (w - 245, 58),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, mic_color, 1, cv2.LINE_AA)
-        cv2.putText(frame, f"CABLE: #{self.sound_engine.cable_device_id}", (w - 120, 58),
+
+        cam_text = f"CAM: #{self.camera_index}"
+        cv2.putText(frame, cam_text, (w - 155, 58),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 220, 255), 1, cv2.LINE_AA)
+
+        cv2.putText(frame, f"CABLE: #{self.sound_engine.cable_device_id}", (w - 80, 58),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1, cv2.LINE_AA)
 
         # الشريط السفلي
@@ -379,17 +443,61 @@ class HandSoundboardApp:
         cv2.putText(frame, last_sfx, (20, h - 16),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 220, 100), 1, cv2.LINE_AA)
 
-        hint_text = "[Q] Exit | Single Hand (7 SFX)"
-        cv2.putText(frame, hint_text, (w - 250, h - 16),
+        hint_text = "[C] Switch Cam | [Q] Exit"
+        cv2.putText(frame, hint_text, (w - 240, h - 16),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.48, (160, 160, 170), 1, cv2.LINE_AA)
 
-    def run(self):
-        cap = cv2.VideoCapture(config.CAMERA_INDEX)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
+        # إشعار منبثق عند تبديل الكاميرا (Toast Notification)
+        if (time.time() - self.camera_toast_time < 2.5) and self.camera_toast_text:
+            toast_w, toast_h = 320, 42
+            tx = (w - toast_w) // 2
+            ty = h - 90
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (tx, ty), (tx + toast_w, ty + toast_h), (25, 25, 35), -1)
+            cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
+            cv2.rectangle(frame, (tx, ty), (tx + toast_w, ty + toast_h), (0, 255, 128), 2)
+            cv2.putText(frame, self.camera_toast_text, (tx + 18, ty + 28),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.58, (255, 255, 255), 1, cv2.LINE_AA)
 
-        if not cap.isOpened():
-            print(f"[X] خطأ: تعذر فتح كاميرا الويب برقم الفهرس {config.CAMERA_INDEX}")
+    def switch_camera(self):
+        """التبديل الفوري إلى الكاميرا التالية في الوقت الفعلي"""
+        if len(self.available_cameras) <= 1:
+            self.camera_toast_text = "Only 1 Camera Detected"
+            self.camera_toast_time = time.time()
+            return
+
+        cur_pos = self.available_cameras.index(self.camera_index) if self.camera_index in self.available_cameras else 0
+        next_cam = self.available_cameras[(cur_pos + 1) % len(self.available_cameras)]
+
+        print(f"\n[*] جاري التبديل من الكاميرا #{self.camera_index} إلى الكاميرا #{next_cam}...")
+        new_cap = cv2.VideoCapture(next_cam)
+        new_cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
+        new_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
+
+        if new_cap.isOpened():
+            ret_test, _ = new_cap.read()
+            if ret_test:
+                if self.cap:
+                    self.cap.release()
+                self.cap = new_cap
+                self.camera_index = next_cam
+                self.camera_toast_text = f"Switched to Cam #{self.camera_index}"
+                self.camera_toast_time = time.time()
+                print(f"[✓] تم الانتقال بنجاح إلى الكاميرا #{self.camera_index}!")
+                return
+            new_cap.release()
+
+        print(f"[X] تعذر فتح الكاميرا #{next_cam}!")
+        self.camera_toast_text = f"Failed to open Cam #{next_cam}"
+        self.camera_toast_time = time.time()
+
+    def run(self):
+        self.cap = cv2.VideoCapture(self.camera_index)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
+
+        if not self.cap.isOpened():
+            print(f"[X] خطأ: تعذر فتح كاميرا الويب برقم الفهرس {self.camera_index}")
             return
 
         window_name = "AI Hand-Gesture Soundboard (Single Hand - Discord / Mic In)"
@@ -397,12 +505,15 @@ class HandSoundboardApp:
 
         print("=" * 70)
         print("  🚀 نظام الـ Soundboard باليد الواحدة (7 حركات) يعمل الآن بنجاح! 🚀")
+        print(f"  - الكاميرا المستخدمة حالياً: Camera #{self.camera_index}")
+        if len(self.available_cameras) > 1:
+            print("  - [ميزة جديدة] اضغط حرف [C] في أي وقت للتبديل بين الكاميرات مباشرة.")
         print("  - أظهر يدك أمام الكاميرا ونفذ أي حركة لإطلاق الصوت مباشرة إلى المايك.")
         print("  - اضغط حرف [Q] من لوحة المفاتيح للخروج.")
         print("=" * 70 + "\n")
 
         while True:
-            ret, frame = cap.read()
+            ret, frame = self.cap.read()
             if not ret:
                 time.sleep(0.04)
                 continue
@@ -457,8 +568,11 @@ class HandSoundboardApp:
             if key == ord('q') or key == ord('Q') or key == 27:
                 print("\n[*] إغلاق السكريبت...")
                 break
+            elif key == ord('c') or key == ord('C'):
+                self.switch_camera()
 
-        cap.release()
+        if self.cap:
+            self.cap.release()
         cv2.destroyAllWindows()
         self.sound_engine.stop()
         sd.stop()
